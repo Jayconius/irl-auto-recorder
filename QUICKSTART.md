@@ -67,7 +67,7 @@ Press **Enter** to accept all defaults.
 nano ~/recordings/stream_ids.txt
 ```
 
-Add your stream IDs, one per line:
+Add your stream IDs, one per line: (Stream IDs are add automatically within 30 seconds, you can skip this part.)
 ```
 play_yourstream1
 play_yourstream2
