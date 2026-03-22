@@ -2,10 +2,6 @@
 
 Automatically records all incoming SRT streams from [OpenIRL/srtla-receiver](https://github.com/OpenIRL/srtla-receiver) with auto-discovery, segmented MKV output, and automatic cleanup.
 
-> 🚀 **New here?** See [QUICKSTART.md](QUICKSTART.md) to get up and running fast.
-
----
-
 ## ✨ Features
 
 - 🎬 **Auto-Recording** — records all active SRT streams in crash-safe 15-minute MKV segments
@@ -56,6 +52,19 @@ After editing, apply changes with:
 ```bash
 cd ~/irl-auto-recorder && docker compose restart
 ```
+
+---
+
+## ⚡ Quick & Easy Install
+
+---
+
+> ### 🟢 New to this? Don't want the hassle?
+> **We've got you covered.** The [QUICKSTART.md](QUICKSTART.md) guide walks you through the entire setup from start to finish with simple copy-paste commands — no Linux expertise required.
+>
+> **➡️ [Click here to go to the Quick Start Guide](QUICKSTART.md)**
+>
+> Just clone the repo, run the installer, and you're recording in minutes.
 
 ---
 
