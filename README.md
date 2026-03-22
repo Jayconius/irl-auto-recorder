@@ -434,3 +434,19 @@ Built on top of:
 - [OpenIRL/srtla-receiver](https://github.com/OpenIRL/srtla-receiver)
 - [OpenIRL/srtla](https://github.com/OpenIRL/srtla)
 - [OpenIRL/srt-live-server](https://github.com/OpenIRL/srt-live-server)
+
+---
+
+## 📢 Disclaimer
+
+This is a personal project, built and maintained in my own time. It works well for my use case but comes with no guarantees. Updates will be infrequent — likely only when breaking changes occur in [OpenIRL/srtla-receiver](https://github.com/OpenIRL/srtla-receiver) or significant new features are worth adding. Issues and pull requests are welcome but response times may vary.
+
+---
+
+## 📄 License
+
+This project is free and open. Do whatever you want with it.
+
+You are free to use, copy, modify, merge, publish, distribute, and build upon this project — for personal or commercial purposes — with no restrictions and no requirement to credit the original author.
+
+**This software is provided as-is, with no warranty of any kind.** The author is not responsible for any data loss, hardware issues, or other problems that may arise from its use. Use it at your own risk.
