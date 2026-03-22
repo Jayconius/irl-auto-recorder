@@ -61,7 +61,7 @@ Press **Enter** to accept all defaults.
 
 ---
 
-## Step 5 — Add Your Stream IDs 
+## Step 5 — Add Your Stream IDs *(Optional)*
 (Stream IDs are add automatically within 30 seconds, you can skip this part.)
 
 ```bash
