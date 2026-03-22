@@ -61,13 +61,13 @@ Press **Enter** to accept all defaults.
 
 ---
 
-## Step 5 — Add Your Stream IDs
+## Step 5 — Add Your Stream IDs (Stream IDs are add automatically within 30 seconds, you can skip this part.)
 
 ```bash
 nano ~/recordings/stream_ids.txt
 ```
 
-Add your stream IDs, one per line: (Stream IDs are add automatically within 30 seconds, you can skip this part.)
+Add your stream IDs, one per line: 
 ```
 play_yourstream1
 play_yourstream2
