@@ -2,16 +2,18 @@
 
 Automatically records all incoming SRT streams from [OpenIRL/srtla-receiver](https://github.com/OpenIRL/srtla-receiver) with auto-discovery, segmented MKV output, and automatic cleanup.
 
+> 🚀 **New here?** See [QUICKSTART.md](QUICKSTART.md) to get up and running fast.
+
 ---
 
 ## ✨ Features
 
-- 🎬 **Auto-Recording** — records all configured SRT streams automatically in 15-minute MKV segments
-- 🔍 **Auto-Discovery** — monitors OpenIRL logs and automatically adds new stream IDs
-- 🧹 **Auto-Cleanup** — deletes oldest recordings when disk usage hits 85%
-- 🔌 **Disconnect Protection** — 90-second grace period before stopping a recording on disconnect
-- 📁 **Organised Storage** — recordings sorted by stream ID and date
-- 🐳 **Docker-based** — runs anywhere Docker runs (x86 and ARM)
+- 🎬 **Auto-Recording** — records all active SRT streams in crash-safe 15-minute MKV segments
+- 🔍 **Auto-Discovery** — monitors OpenIRL logs and automatically adds new stream IDs without any manual input
+- 🧹 **Auto-Cleanup** — deletes the oldest recordings when disk usage hits a configurable threshold
+- 🔌 **Disconnect Protection** — a configurable grace period prevents recordings from stopping on brief network drops
+- 📁 **Organised Storage** — recordings are automatically sorted by stream ID and date
+- 🐳 **Docker-based** — works on any Linux system running Docker, including x86 and ARM (Raspberry Pi)
 
 ---
 
@@ -19,97 +21,229 @@ Automatically records all incoming SRT streams from [OpenIRL/srtla-receiver](htt
 
 - [OpenIRL/srtla-receiver](https://github.com/OpenIRL/srtla-receiver) installed and running
 - Docker + Docker Compose
-- Ubuntu 22.04 / Debian 12 (or any Linux with Docker support)
+- Ubuntu 22.04 / Debian 12 or any Linux distribution with Docker support
 
 ---
 
-## 🚀 Quick Start
+## 📦 Components
 
-### 1. Clone or download this repo
+### Auto-Recorder (`auto_recorder.py`)
+The core component. Polls the OpenIRL stats API every 10 seconds to check which streams are active, then launches an FFmpeg process per stream writing segmented MKV files. If a stream goes offline it waits for the grace period to expire before stopping the recording — protecting against brief disconnections.
+
+### Auto-Discovery (`stream_auto_discovery.py`)
+An optional systemd service that monitors the OpenIRL Docker container logs in real time. When it detects a new `live_` stream ID connecting, it automatically converts it to the equivalent `play_` ID and appends it to `stream_ids.txt`. The recorder picks it up within 30 seconds.
+
+### Auto-Cleanup (`auto_cleanup.sh`)
+An optional systemd service that checks disk usage on a configurable interval. When usage exceeds the threshold (default 85%) it deletes the oldest recording segments until usage drops below the target level (default 75%).
+
+---
+
+## ⚙️ Configuration
+
+All settings are configured via environment variables in `~/irl-auto-recorder/docker-compose.yml`:
+
+| Variable | Default | Description |
+|---|---|---|
+| `STATS_HOST` | `127.0.0.1:8080` | OpenIRL stats API host and port |
+| `SRT_CALLER_HOST` | `127.0.0.1:4000` | SRT output port to record from |
+| `SEGMENT_DURATION` | `900` | Recording segment length in seconds (default 15 min) |
+| `DISCONNECT_GRACE` | `90` | Seconds to wait before stopping after a disconnect |
+| `POLL_INTERVAL` | `10` | How often to check active streams in seconds |
+| `DISCOVERY_INTERVAL` | `30` | How often to check `stream_ids.txt` for new entries |
+| `RECORDINGS_BASE` | `/root/recordings` | Recording output path inside the container |
+
+After editing, apply changes with:
+```bash
+cd ~/irl-auto-recorder && docker compose restart
+```
+
+---
+
+## 🛠️ Manual Installation
+
+> 💡 **Just want to get started?** Use [QUICKSTART.md](QUICKSTART.md) — it handles all of this automatically via the installer scripts.
+
+The following is for advanced users who want to understand what the installers do, run components manually, or integrate this into an existing setup.
+
+### Prerequisites
 
 ```bash
-mkdir -p ~/irl-auto-recorder
+# Install Docker
+curl -fsSL https://get.docker.com | sh
+sudo usermod -aG docker $USER   # Add your user to the docker group
+newgrp docker                   # Apply group change without logout
+```
+
+### Recorder Container
+
+The recorder runs as a Docker container built from the included `Dockerfile`. To build and start it manually without the installer:
+
+```bash
 cd ~/irl-auto-recorder
-# Place all files here
-```
 
-### 2. Install the Auto-Recorder
+# Create recordings directory and stream list
+mkdir -p ~/recordings
+touch ~/recordings/stream_ids.txt
 
-```bash
-chmod +x install_recorder.sh
-./install_recorder.sh
-```
+# Build and start
+docker compose up -d --build
 
-The installer will ask:
-- OpenIRL Stats host (default: `127.0.0.1:8080`)
-- SRT Player port (default: `127.0.0.1:4000`)
-- Segment duration (default: 15 minutes)
-- Disconnect grace period (default: 90 seconds)
-
-Just press **Enter** to accept defaults.
-
-### 3. Add your first stream
-
-```bash
-nano ~/recordings/stream_ids.txt
-```
-
-Add one `play_` stream ID per line:
-```
-play_yourstream1
-play_yourstream2
-```
-
-The recorder picks up changes within 30 seconds.
-
-### 4. Verify it's working
-
-```bash
+# Verify
+docker ps | grep irl-auto-recorder
 docker logs -f irl-auto-recorder
 ```
 
-Expected output:
+To run without Docker Compose directly:
+```bash
+docker build -t irl-auto-recorder .
+docker run -d \
+  --name irl-auto-recorder \
+  --network host \
+  --restart unless-stopped \
+  -v ~/recordings:/root/recordings \
+  -e STATS_HOST=127.0.0.1:8080 \
+  -e SRT_CALLER_HOST=127.0.0.1:4000 \
+  -e SEGMENT_DURATION=900 \
+  -e DISCONNECT_GRACE=90 \
+  irl-auto-recorder
 ```
-[2026-03-22 12:00:00] 🚀 OpenIRL Auto-Recorder started
-[2026-03-22 12:00:00] 🆕 Discovered new stream ID: play_yourstream1
+
+### Auto-Discovery Service
+
+The auto-discovery script runs as a systemd service. To install it manually:
+
+```bash
+# Copy script
+cp stream_auto_discovery.py ~/stream_auto_discovery.py
+chmod +x ~/stream_auto_discovery.py
+
+# Install systemd service (replace 'youruser' with your Linux username)
+sudo cp openirl-discovery.service /etc/systemd/system/
+sudo sed -i 's/%i/youruser/g' /etc/systemd/system/openirl-discovery.service
+
+# Enable and start
+sudo systemctl daemon-reload
+sudo systemctl enable openirl-discovery
+sudo systemctl start openirl-discovery
+
+# Verify
+sudo systemctl status openirl-discovery
+```
+
+### Auto-Cleanup Service
+
+The cleanup script is a bash script run by a systemd service. To install manually:
+
+```bash
+# Copy and make executable
+cp auto_cleanup.sh ~/auto_cleanup.sh
+chmod +x ~/auto_cleanup.sh
+
+# Install systemd service
+sudo cp openirl-cleanup.service /etc/systemd/system/
+sudo sed -i 's/%i/youruser/g' /etc/systemd/system/openirl-cleanup.service
+
+# Enable and start
+sudo systemctl daemon-reload
+sudo systemctl enable openirl-cleanup
+sudo systemctl start openirl-cleanup
+```
+
+### Running Without Docker
+
+If you prefer to run `auto_recorder.py` directly on the host rather than in Docker, ensure FFmpeg is installed:
+
+```bash
+sudo apt install ffmpeg python3 -y
+python3 ~/irl-auto-recorder/auto_recorder.py
+```
+
+Or as a systemd service for auto-start on boot:
+
+```bash
+sudo nano /etc/systemd/system/irl-recorder.service
+```
+
+```ini
+[Unit]
+Description=IRL Auto-Recorder
+After=network.target docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+User=youruser
+WorkingDirectory=/home/youruser
+Environment=STATS_HOST=127.0.0.1:8080
+Environment=SRT_CALLER_HOST=127.0.0.1:4000
+Environment=SEGMENT_DURATION=900
+Environment=DISCONNECT_GRACE=90
+Environment=RECORDINGS_BASE=/home/youruser/recordings
+ExecStart=/usr/bin/python3 /home/youruser/irl-auto-recorder/auto_recorder.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable irl-recorder
+sudo systemctl start irl-recorder
 ```
 
 ---
 
-## 🔍 Auto-Discovery (Recommended)
+## 💾 Recording Location
 
-Auto-discovery monitors OpenIRL container logs and automatically adds new stream IDs to `stream_ids.txt` — no manual editing needed.
+By default recordings are saved to `~/recordings`. To use a dedicated drive such as a SATA SSD, M.2 drive, or external USB:
 
+**1. Find and mount your drive:**
 ```bash
-chmod +x install_discovery.sh
-./install_discovery.sh
+lsblk -f
+sudo mkdir -p /mnt/recordings
+sudo mount /dev/sdX1 /mnt/recordings
 ```
 
-**How it works:**
-1. Someone connects with `streamid=live_abc123`
-2. Auto-discovery detects it in OpenIRL logs (within 1–2 seconds)
-3. Converts `live_` → `play_` and adds to `stream_ids.txt`
-4. Recorder picks it up within 30 seconds
-5. Recording starts automatically
-
-> ⚠️ Keep streaming for at least 60 seconds on first connection to ensure recording starts.
-
----
-
-## 🧹 Auto-Cleanup (Recommended)
-
-Prevents your disk from filling up by deleting the oldest recordings when usage exceeds a threshold.
-
+**2. Make the mount permanent via `/etc/fstab`:**
 ```bash
-chmod +x install_cleanup.sh
-./install_cleanup.sh
+sudo blkid /dev/sdX1        # Get UUID
+sudo nano /etc/fstab
+```
+Add:
+```
+UUID=your-uuid-here  /mnt/recordings  ext4  defaults,nofail  0  2
+```
+> The `nofail` flag prevents boot failure if the drive is unplugged.
+
+**3. Set permissions:**
+```bash
+sudo chown -R $USER:$USER /mnt/recordings
 ```
 
-The installer will ask:
-- Recordings directory (default: `~/recordings`)
-- Cleanup threshold (default: 85%)
-- Stop cleaning at (default: 75%)
-- Check interval (default: 300 seconds / 5 minutes)
+**4. Update `docker-compose.yml`:**
+```yaml
+volumes:
+  - /mnt/recordings:/root/recordings
+```
+
+**5. Restart the recorder:**
+```bash
+cd ~/irl-auto-recorder
+docker compose down && docker compose up -d --build
+```
+
+### Filesystem Recommendations
+
+| Drive Type | Filesystem | Notes |
+|---|---|---|
+| SATA / M.2 SSD | ext4 | Best performance on Linux |
+| External USB SSD | ext4 | Format on Linux for best results |
+| Shared with Windows | exFAT | Use only if the drive is also used on Windows |
+| NAS / Network share | — | Mount via NFS or SMB first, then follow steps above |
+
+> ⚠️ **Avoid FAT32** — its 4GB file size limit will cause recording failures on long streams.
 
 ---
 
@@ -117,16 +251,17 @@ The installer will ask:
 
 ```
 ~/irl-auto-recorder/
-├── auto_recorder.py          # Main recorder script
-├── Dockerfile                # Container build
-├── docker-compose.yml        # Configuration
-├── stream_auto_discovery.py  # Auto-discovery script
-├── install_recorder.sh       # Recorder installer
-├── install_discovery.sh      # Auto-discovery installer
-└── install_cleanup.sh        # Auto-cleanup installer
+├── auto_recorder.py          # Main recorder — polls stats API and manages FFmpeg
+├── stream_auto_discovery.py  # Auto-discovery — monitors OpenIRL logs
+├── Dockerfile                # Container definition
+├── docker-compose.yml        # Environment config and volume mounts
+├── install_recorder.sh       # Interactive installer for the recorder
+├── install_discovery.sh      # Installer for auto-discovery systemd service
+├── install_cleanup.sh        # Installer for auto-cleanup systemd service
+└── openirl-discovery.service # systemd unit file for auto-discovery
 
 ~/recordings/
-├── stream_ids.txt            # Stream ID list (add your IDs here)
+├── stream_ids.txt            # List of play_ IDs to record (one per line)
 ├── play_stream1/
 │   └── 2026-03-22/
 │       ├── play_stream1_20260322_120000_part001.mkv
@@ -138,200 +273,149 @@ The installer will ask:
 
 ---
 
-## ⚙️ Configuration
+## 🔧 Managing Streams
 
-Edit `~/irl-auto-recorder/docker-compose.yml` to change settings:
+If auto-discovery is installed, new streams are added to `stream_ids.txt` automatically within 30 seconds of a publisher connecting. If you need to add a stream manually — for example before a publisher connects, or if auto-discovery isn't installed — add the `play_` stream ID directly:
 
-```yaml
-environment:
-  - STATS_HOST=127.0.0.1:8080       # OpenIRL stats API
-  - SRT_CALLER_HOST=127.0.0.1:4000  # SRT output port
-  - SEGMENT_DURATION=900            # Segment length in seconds (default: 15 min)
-  - DISCONNECT_GRACE=90             # Grace period before stopping (default: 90s)
-  - POLL_INTERVAL=10                # Stream check interval (default: 10s)
-  - DISCOVERY_INTERVAL=30           # File check interval (default: 30s)
+**Manually add a stream:**
+```bash
+echo "play_yourstreamid" >> ~/recordings/stream_ids.txt
 ```
 
-After editing, restart the container:
+The recorder checks `stream_ids.txt` every 30 seconds and will start recording automatically once the stream is both listed and active.
 
+**Remove a stream from the list:**
 ```bash
-cd ~/irl-auto-recorder
-docker compose restart
+nano ~/recordings/stream_ids.txt
+# Delete the relevant play_ line, save with Ctrl+O, Ctrl+X
+```
+
+**View active stream stats:**
+```bash
+curl http://127.0.0.1:8080/stats/play_YOURSTREAMID
+```
+
+**View today's recordings:**
+```bash
+ls -lh ~/recordings/*/$(date +%Y-%m-%d)/
 ```
 
 ---
 
-## 💾 Changing Recording Location
+## 📂 Viewing & Downloading Recordings
 
-By default recordings save to `~/recordings` on your main drive. For a dedicated SATA SSD, external USB drive, or any other mount point, follow these steps:
+[File Browser](https://github.com/filebrowser/filebrowser) is a lightweight web-based file manager that makes it easy to browse, download, and manage your recordings from any device on your network — no command line needed.
 
-### Step 1 — Find your drive's mount point
+**Install File Browser:**
+```bash
+curl -fsSL https://raw.githubusercontent.com/filebrowser/get/master/get.sh | bash
+```
+
+**Run pointing at your recordings folder:**
+```bash
+filebrowser -r ~/recordings -a 0.0.0.0 -p 8082
+```
+
+**Access it in your browser:**
+```
+http://YOUR-SERVER-IP:8082
+```
+
+Default login is `admin` / `admin` — change this immediately:
+```bash
+filebrowser -r ~/recordings config set --username admin
+filebrowser -r ~/recordings users update admin --password yournewpassword
+```
+
+**Run File Browser as a systemd service (auto-starts on boot):**
+```bash
+sudo nano /etc/systemd/system/filebrowser.service
+```
+
+```ini
+[Unit]
+Description=File Browser
+After=network.target
+
+[Service]
+Type=simple
+User=youruser
+ExecStart=/usr/local/bin/filebrowser -r /home/youruser/recordings -a 0.0.0.0 -p 8082
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
 
 ```bash
-lsblk -f
+sudo systemctl daemon-reload
+sudo systemctl enable filebrowser
+sudo systemctl start filebrowser
 ```
 
-Look for your drive in the output. Common mount points:
-- SATA SSD: `/mnt/ssd` or `/media/username/drivename`
-- External USB: `/media/username/drivename`
-- A drive you mounted manually: wherever you mounted it (e.g. `/mnt/recordings`)
-
-If your drive isn't mounted yet, mount it first:
-
-```bash
-# Create a mount point
-sudo mkdir -p /mnt/recordings
-
-# Mount the drive (replace sdX1 with your actual device)
-sudo mount /dev/sdX1 /mnt/recordings
-
-# Verify it mounted correctly
-df -h /mnt/recordings
-```
-
-### Step 2 — Make it mount automatically on boot
-
-Find your drive's UUID:
-```bash
-sudo blkid /dev/sdX1
-```
-
-Add it to `/etc/fstab`:
-```bash
-sudo nano /etc/fstab
-```
-
-Add this line (replace UUID and filesystem type as appropriate):
-```
-UUID=your-uuid-here  /mnt/recordings  ext4  defaults,nofail  0  2
-```
-
-> ⚠️ The `nofail` option is important — it prevents the system failing to boot if the drive is unplugged.
-
-### Step 3 — Set correct permissions
-
-```bash
-sudo chown -R $USER:$USER /mnt/recordings
-```
-
-### Step 4 — Update docker-compose.yml
-
-Edit `~/irl-auto-recorder/docker-compose.yml` and change the volume mount:
-
-```yaml
-volumes:
-  - /mnt/recordings:/root/recordings  # Change to your mount point
-```
-
-Also update the environment variable:
-
-```yaml
-environment:
-  - RECORDINGS_BASE=/root/recordings  # Keep this as-is, it's inside the container
-```
-
-### Step 5 — Move existing recordings (optional)
-
-If you want to keep your existing recordings:
-
-```bash
-mv ~/recordings/* /mnt/recordings/
-```
-
-### Step 6 — Restart the recorder
-
-```bash
-cd ~/irl-auto-recorder
-docker compose down
-docker compose up -d --build
-```
-
-### Step 7 — Verify recordings are going to the new location
-
-```bash
-docker logs -f irl-auto-recorder
-ls -lh /mnt/recordings/
-```
+> 💡 If you're using Tailscale, File Browser is only accessible on your Tailscale network — no need to expose port 8082 publicly.
 
 ---
 
-### 💡 Tips for Storage Drives
-
-| Drive Type | Recommended Filesystem | Notes |
-|---|---|---|
-| SATA SSD | ext4 | Best for Linux, reliable for sustained writes |
-| External USB SSD | ext4 | Format on Linux for best performance |
-| External USB (Windows shared) | exFAT | Use if drive is shared between Windows and Linux |
-| NAS / Network share | — | Mount via NFS or SMB, then follow steps above |
-
-> ⚠️ Avoid FAT32 — it has a 4GB file size limit which will cause recording failures on long streams.
-
----
-
-## 📊 Useful Commands
+## 📊 Service Management
 
 ```bash
-# Recorder
+# Recorder (Docker)
+docker ps | grep irl-auto-recorder                 # Check running
 docker logs -f irl-auto-recorder                   # Live logs
-cd ~/irl-auto-recorder && docker compose restart   # Restart recorder
-nano ~/recordings/stream_ids.txt                   # Edit stream list
+cd ~/irl-auto-recorder && docker compose restart   # Restart
+docker compose down && docker compose up -d        # Full restart
 
-# Auto-Discovery
-sudo journalctl -u openirl-discovery -f            # Live logs
-sudo systemctl restart openirl-discovery           # Restart
+# Auto-Discovery (systemd)
 sudo systemctl status openirl-discovery            # Check status
+sudo systemctl restart openirl-discovery           # Restart
+sudo journalctl -u openirl-discovery -f            # Live logs
 
-# Auto-Cleanup
-sudo journalctl -u openirl-cleanup -f              # Live logs
+# Auto-Cleanup (systemd)
+sudo systemctl status openirl-cleanup              # Check status
 sudo systemctl restart openirl-cleanup             # Restart
+sudo journalctl -u openirl-cleanup -f              # Live logs
 
-# Storage
+# Disk
 df -h /                                            # Check disk space
 du -sh ~/recordings                                # Total recording size
-find ~/recordings -name "*.mkv" | wc -l            # Count recordings
+find ~/recordings -name "*.mkv" | wc -l            # Count MKV files
 ```
 
 ---
 
 ## 🔍 Troubleshooting
 
-### Recorder not starting
+### Recorder container not starting
 ```bash
 docker logs irl-auto-recorder
-docker ps -a | grep irl-auto-recorder
-
-# Rebuild if needed
-cd ~/irl-auto-recorder
-docker compose down
-docker compose up -d --build
+# If needed, rebuild:
+cd ~/irl-auto-recorder && docker compose down && docker compose up -d --build
 ```
 
-### Auto-discovery not adding streams
-```bash
-sudo systemctl status openirl-discovery
-sudo journalctl -u openirl-discovery -f
-sudo systemctl restart openirl-discovery
-```
+### Streams not being recorded
+1. Confirm the stream ID is in `stream_ids.txt`: `cat ~/recordings/stream_ids.txt`
+2. Confirm the stream is active: `curl http://127.0.0.1:8080/stats/play_YOURSTREAMID`
+3. Check recorder logs: `docker logs --tail 50 irl-auto-recorder`
 
-### Stream not recording
-```bash
-# Check stream ID is in the list
-cat ~/recordings/stream_ids.txt
+### Auto-discovery not detecting new streams
+1. Check the service is running: `sudo systemctl status openirl-discovery`
+2. Check OpenIRL logs directly: `docker logs srtla-receiver | grep streamid`
+3. If no `streamid=` entries appear in logs, auto-discovery won't trigger — add IDs manually to `stream_ids.txt` instead
 
-# Check stream is active via stats API
-curl http://127.0.0.1:8080/stats/play_YOURSTREAMID
-
-# Check recorder logs
-docker logs --tail 50 irl-auto-recorder
-```
+### Disk filling up
+- Lower the cleanup threshold in the auto-cleanup installer (e.g. 75% instead of 85%)
+- Or point recordings at a larger dedicated drive — see [Recording Location](#-recording-location)
 
 ---
 
 ## 📝 Notes
 
-- Only `play_` stream IDs are recorded. Auto-discovery converts `live_` → `play_` automatically.
-- MKV format is used for crash-safe recording — completed segments are always intact even if the system crashes mid-stream.
-- The recorder and auto-discovery use the same `stream_ids.txt` file — you can mix manual and auto-discovered entries freely.
+- Only `play_` stream IDs are recorded — auto-discovery converts `live_` → `play_` automatically
+- MKV is used over MP4 for crash safety — completed segments are always intact even if the system loses power mid-recording
+- `stream_ids.txt` is the single source of truth — both manual entries and auto-discovered entries live here and can be mixed freely
+- The recorder Docker container and auto-discovery systemd service are independent — either can be restarted without affecting the other
 
 ---
 
