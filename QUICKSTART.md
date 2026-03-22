@@ -4,10 +4,15 @@
 
 ---
 
-## Step 1 — Upload Files
+## Step 1 — Get the Files
 
-Upload all files to your server:
+**Option A — Clone from GitHub (recommended):**
+```bash
+git clone https://github.com/Jayconius/irl-auto-recorder.git ~/irl-auto-recorder
+cd ~/irl-auto-recorder
+```
 
+**Option B — Upload manually:**
 ```bash
 mkdir -p ~/irl-auto-recorder
 cd ~/irl-auto-recorder
