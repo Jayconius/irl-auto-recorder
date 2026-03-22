@@ -121,4 +121,8 @@ ls -lh ~/recordings/*/$(date +%Y-%m-%d)/
 
 ---
 
+## 💬 Need Help?
+
+If you're stuck, you can ask Claude AI for help. Copy your error message or question and paste it at [claude.ai](https://claude.ai).
+
 > 📖 For full documentation see [README.md](README.md)
