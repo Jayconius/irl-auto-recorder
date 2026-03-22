@@ -1,0 +1,25 @@
+services:
+  recorder:
+    build: .
+    container_name: irl-auto-recorder
+    restart: unless-stopped
+    network_mode: "host"
+    user: "1000:1000"
+    volumes:
+      - ~/recordings:/root/recordings
+    environment:
+      # OpenIRL/SRTLA connection settings
+      # Change these to match your OpenIRL setup
+      - STATS_HOST=127.0.0.1:8080
+      - SRT_CALLER_HOST=127.0.0.1:4000
+      
+      # Recording settings (optional - these are defaults)
+      - SEGMENT_DURATION=900      # 15 minutes per segment
+      - DISCONNECT_GRACE=90       # Wait 90 seconds before stopping
+      - POLL_INTERVAL=10          # Check streams every 10 seconds
+      
+      # Advanced settings
+      - PYTHONUNBUFFERED=1
+      - RECORDINGS_BASE=/root/recordings
+    cap_add:
+      - NET_ADMIN
