@@ -57,22 +57,22 @@ cd ~/irl-auto-recorder && docker compose restart
 
 ## ⚡ Quick & Easy Install
 
----
-
-> ### 🟢 New to this? Don't want the hassle?
-> **We've got you covered.** The [QUICKSTART.md](QUICKSTART.md) guide walks you through the entire setup from start to finish with simple copy-paste commands — no Linux expertise required.
->
-> **➡️ [Click here to go to the Quick Start Guide](QUICKSTART.md)**
+> [!TIP]
+> ### 🟢 New to this? Start here.
+> The **[QUICKSTART.md](QUICKSTART.md)** guide walks you through the entire setup from start to finish with simple copy-paste commands — no Linux expertise required.
 >
 > Just clone the repo, run the installer, and you're recording in minutes.
+>
+> **➡️ [Open the Quick Start Guide →](QUICKSTART.md)**
 
 ---
 
 ## 🛠️ Manual Installation
 
-> 💡 **Just want to get started?** See [QUICKSTART.md](QUICKSTART.md) instead.
-
-For advanced users who want to run components manually, understand what the installers do, or integrate this into an existing setup — see **[INSTALL.md](INSTALL.md)**.
+> [!NOTE]
+> For advanced users who want to run components manually, understand what the installers do, or integrate this into an existing setup.
+>
+> **➡️ [Open the Manual Installation Guide →](INSTALL.md)**
 
 ---
 
