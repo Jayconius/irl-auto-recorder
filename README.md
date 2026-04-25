@@ -2,6 +2,13 @@
 
 Automatically records all incoming SRT streams from [OpenIRL/srtla-receiver](https://github.com/OpenIRL/srtla-receiver) with auto-discovery, segmented MKV output, and automatic cleanup.
 
+![Docker](https://img.shields.io/badge/Docker-required-2496ED?logo=docker&logoColor=white)
+![Platform](https://img.shields.io/badge/Platform-x86%20%7C%20ARM-lightgrey)
+![License](https://img.shields.io/badge/License-Unlicense-green)
+![Raspberry Pi](https://img.shields.io/badge/Raspberry%20Pi-compatible-C51A4A?logo=raspberrypi&logoColor=white)
+
+---
+
 ## ✨ Features
 
 - 🎬 **Auto-Recording** — records all active SRT streams in crash-safe 15-minute MKV segments
@@ -65,8 +72,6 @@ cd ~/irl-auto-recorder && docker compose restart
 >
 > **➡️ [Open the Quick Start Guide →](QUICKSTART.md)**
 
----
-
 ## 🛠️ Manual Installation
 
 > [!NOTE]
@@ -76,10 +81,43 @@ cd ~/irl-auto-recorder && docker compose restart
 
 ---
 
+## 📝 Notes
+
+- Only `play_` stream IDs are recorded — auto-discovery converts `live_` → `play_` automatically
+- MKV is used over MP4 for crash safety — completed segments are always intact even if the system loses power mid-recording
+- `stream_ids.txt` is the single source of truth — both manual entries and auto-discovered entries live here and can be mixed freely
+- The recorder Docker container and auto-discovery systemd service are independent — either can be restarted without affecting the other
+
+---
+
+## 📁 File Structure
+
+```
+~/irl-auto-recorder/
+├── auto_recorder.py          # Main recorder — polls stats API and manages FFmpeg
+├── stream_auto_discovery.py  # Auto-discovery — monitors OpenIRL logs
+├── Dockerfile                # Container definition
+├── docker-compose.yml        # Environment config and volume mounts
+├── install_recorder.sh       # Interactive installer for the recorder
+├── install_discovery.sh      # Installer for auto-discovery systemd service
+├── install_cleanup.sh        # Installer for auto-cleanup systemd service
+└── openirl-discovery.service # systemd unit file for auto-discovery
+
+~/recordings/
+├── stream_ids.txt            # List of play_ IDs to record (one per line)
+├── play_stream1/
+│   └── 2026-03-22/
+│       ├── play_stream1_20260322_120000_part001.mkv
+│       └── play_stream1_20260322_120000_part002.mkv
+└── play_stream2/
+    └── 2026-03-22/
+        └── play_stream2_20260322_130000_part001.mkv
+```
+
+---
+
 <details>
 <summary>💾 Recording Location</summary>
-
-## 💾 Recording Location
 
 By default recordings are saved to `~/recordings`. To use a dedicated drive such as a SATA SSD, M.2 drive, or external USB:
 
@@ -131,43 +169,8 @@ docker compose down && docker compose up -d --build
 
 </details>
 
----
-
-<details>
-<summary>📁 File Structure</summary>
-
-## 📁 File Structure
-
-```
-~/irl-auto-recorder/
-├── auto_recorder.py          # Main recorder — polls stats API and manages FFmpeg
-├── stream_auto_discovery.py  # Auto-discovery — monitors OpenIRL logs
-├── Dockerfile                # Container definition
-├── docker-compose.yml        # Environment config and volume mounts
-├── install_recorder.sh       # Interactive installer for the recorder
-├── install_discovery.sh      # Installer for auto-discovery systemd service
-├── install_cleanup.sh        # Installer for auto-cleanup systemd service
-└── openirl-discovery.service # systemd unit file for auto-discovery
-
-~/recordings/
-├── stream_ids.txt            # List of play_ IDs to record (one per line)
-├── play_stream1/
-│   └── 2026-03-22/
-│       ├── play_stream1_20260322_120000_part001.mkv
-│       └── play_stream1_20260322_120000_part002.mkv
-└── play_stream2/
-    └── 2026-03-22/
-        └── play_stream2_20260322_130000_part001.mkv
-```
-
-</details>
-
----
-
 <details>
 <summary>🔧 Managing Streams</summary>
-
-## 🔧 Managing Streams
 
 If auto-discovery is installed, new streams are added to `stream_ids.txt` automatically within 30 seconds of a publisher connecting. If you need to add a stream manually — for example before a publisher connects, or if auto-discovery isn't installed — add the `play_` stream ID directly:
 
@@ -196,12 +199,8 @@ ls -lh ~/recordings/*/$(date +%Y-%m-%d)/
 
 </details>
 
----
-
 <details>
 <summary>📂 Viewing & Downloading Recordings</summary>
-
-## 📂 Viewing & Downloading Recordings
 
 [File Browser](https://github.com/filebrowser/filebrowser) is a lightweight web-based file manager that makes it easy to browse, download, and manage your recordings from any device on your network — no command line needed.
 
@@ -257,12 +256,8 @@ sudo systemctl start filebrowser
 
 </details>
 
----
-
 <details>
 <summary>📊 Service Management</summary>
-
-## 📊 Service Management
 
 ```bash
 # Recorder (Docker)
@@ -289,12 +284,8 @@ find ~/recordings -name "*.mkv" | wc -l            # Count MKV files
 
 </details>
 
----
-
 <details>
 <summary>🔍 Troubleshooting</summary>
-
-## 🔍 Troubleshooting
 
 ### Recorder container not starting
 ```bash
@@ -316,20 +307,6 @@ cd ~/irl-auto-recorder && docker compose down && docker compose up -d --build
 ### Disk filling up
 - Lower the cleanup threshold in the auto-cleanup installer (e.g. 75% instead of 85%)
 - Or point recordings at a larger dedicated drive — see [Recording Location](#-recording-location)
-
-</details>
-
----
-
-<details>
-<summary>📝 Notes</summary>
-
-## 📝 Notes
-
-- Only `play_` stream IDs are recorded — auto-discovery converts `live_` → `play_` automatically
-- MKV is used over MP4 for crash safety — completed segments are always intact even if the system loses power mid-recording
-- `stream_ids.txt` is the single source of truth — both manual entries and auto-discovered entries live here and can be mixed freely
-- The recorder Docker container and auto-discovery systemd service are independent — either can be restarted without affecting the other
 
 </details>
 
