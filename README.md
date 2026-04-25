@@ -116,6 +116,7 @@ cd ~/irl-auto-recorder && docker compose restart
 
 ---
 
+<a name="recording-location"></a>
 <details>
 <summary>💾 Recording Location</summary>
 
@@ -306,7 +307,7 @@ cd ~/irl-auto-recorder && docker compose down && docker compose up -d --build
 
 ### Disk filling up
 - Lower the cleanup threshold in the auto-cleanup installer (e.g. 75% instead of 85%)
-- Or point recordings at a larger dedicated drive — see [Recording Location](#-recording-location)
+- Or point recordings at a larger dedicated drive — see [Recording Location](#recording-location)
 
 </details>
 
