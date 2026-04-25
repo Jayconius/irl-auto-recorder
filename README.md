@@ -28,6 +28,25 @@ Automatically records all incoming SRT streams from [OpenIRL/srtla-receiver](htt
 
 ---
 
+## ⚡ Quick & Easy Install
+
+> [!TIP]
+> ### 🟢 New to this? Start here.
+> The **[QUICKSTART.md](QUICKSTART.md)** guide walks you through the entire setup from start to finish with simple copy-paste commands — no Linux expertise required.
+>
+> Just clone the repo, run the installer, and you're recording in minutes.
+>
+> **➡️ [Open the Quick Start Guide →](QUICKSTART.md)**
+
+## 🛠️ Manual Installation
+
+> [!NOTE]
+> For advanced users who want to run components manually, understand what the installers do, or integrate this into an existing setup.
+>
+> **➡️ [Open the Manual Installation Guide →](INSTALL.md)**
+
+---
+
 ## 📦 Components
 
 ### Auto-Recorder (`auto_recorder.py`)
@@ -59,25 +78,6 @@ After editing, apply changes with:
 ```bash
 cd ~/irl-auto-recorder && docker compose restart
 ```
-
----
-
-## ⚡ Quick & Easy Install
-
-> [!TIP]
-> ### 🟢 New to this? Start here.
-> The **[QUICKSTART.md](QUICKSTART.md)** guide walks you through the entire setup from start to finish with simple copy-paste commands — no Linux expertise required.
->
-> Just clone the repo, run the installer, and you're recording in minutes.
->
-> **➡️ [Open the Quick Start Guide →](QUICKSTART.md)**
-
-## 🛠️ Manual Installation
-
-> [!NOTE]
-> For advanced users who want to run components manually, understand what the installers do, or integrate this into an existing setup.
->
-> **➡️ [Open the Manual Installation Guide →](INSTALL.md)**
 
 ---
 
