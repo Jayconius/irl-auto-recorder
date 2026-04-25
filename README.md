@@ -76,6 +76,9 @@ For advanced users who want to run components manually, understand what the inst
 
 ---
 
+<details>
+<summary>💾 Recording Location</summary>
+
 ## 💾 Recording Location
 
 By default recordings are saved to `~/recordings`. To use a dedicated drive such as a SATA SSD, M.2 drive, or external USB:
@@ -126,7 +129,12 @@ docker compose down && docker compose up -d --build
 
 > ⚠️ **Avoid FAT32** — its 4GB file size limit will cause recording failures on long streams.
 
+</details>
+
 ---
+
+<details>
+<summary>📁 File Structure</summary>
 
 ## 📁 File Structure
 
@@ -152,7 +160,12 @@ docker compose down && docker compose up -d --build
         └── play_stream2_20260322_130000_part001.mkv
 ```
 
+</details>
+
 ---
+
+<details>
+<summary>🔧 Managing Streams</summary>
 
 ## 🔧 Managing Streams
 
@@ -181,7 +194,12 @@ curl http://127.0.0.1:8080/stats/play_YOURSTREAMID
 ls -lh ~/recordings/*/$(date +%Y-%m-%d)/
 ```
 
+</details>
+
 ---
+
+<details>
+<summary>📂 Viewing & Downloading Recordings</summary>
 
 ## 📂 Viewing & Downloading Recordings
 
@@ -237,7 +255,12 @@ sudo systemctl start filebrowser
 
 > 💡 If you're using Tailscale, File Browser is only accessible on your Tailscale network — no need to expose port 8082 publicly.
 
+</details>
+
 ---
+
+<details>
+<summary>📊 Service Management</summary>
 
 ## 📊 Service Management
 
@@ -264,7 +287,12 @@ du -sh ~/recordings                                # Total recording size
 find ~/recordings -name "*.mkv" | wc -l            # Count MKV files
 ```
 
+</details>
+
 ---
+
+<details>
+<summary>🔍 Troubleshooting</summary>
 
 ## 🔍 Troubleshooting
 
@@ -289,7 +317,12 @@ cd ~/irl-auto-recorder && docker compose down && docker compose up -d --build
 - Lower the cleanup threshold in the auto-cleanup installer (e.g. 75% instead of 85%)
 - Or point recordings at a larger dedicated drive — see [Recording Location](#-recording-location)
 
+</details>
+
 ---
+
+<details>
+<summary>📝 Notes</summary>
 
 ## 📝 Notes
 
@@ -297,6 +330,8 @@ cd ~/irl-auto-recorder && docker compose down && docker compose up -d --build
 - MKV is used over MP4 for crash safety — completed segments are always intact even if the system loses power mid-recording
 - `stream_ids.txt` is the single source of truth — both manual entries and auto-discovered entries live here and can be mixed freely
 - The recorder Docker container and auto-discovery systemd service are independent — either can be restarted without affecting the other
+
+</details>
 
 ---
 
