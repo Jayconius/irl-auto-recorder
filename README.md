@@ -46,6 +46,14 @@ docker logs -f irl-auto-recorder
 
 You should see a `➕ Tracking play_...` line for each of your profiles.
 
+### Changing the API key
+
+```bash
+./install.sh --set-key
+```
+
+The key is checked against the receiver before it's saved, and the recorder restarts with it.
+
 ### Updating
 
 ```bash

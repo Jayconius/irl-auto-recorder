@@ -7,6 +7,35 @@ cd "$(dirname "$0")"
 say()  { printf '\033[1;36m%s\033[0m\n' "$*"; }
 warn() { printf '\033[1;33m%s\033[0m\n' "$*"; }
 
+# Ask for the API key, clean it up, and check it against the receiver.
+# Prints the key on success. Usage: ask_key <stats_url>
+ask_key() {
+    local url=$1 key code
+    while true; do
+        read -r -s -p "API key (input hidden): " key; echo >&2
+        key=$(printf '%s' "$key" | tr -cd 'A-Za-z0-9_-')
+        [ -z "$key" ] && { echo "" ; return; }
+        code=$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $key" "$url/api/stream-ids" || true)
+        case "$code" in
+            200) echo "Key accepted (${#key} characters)." >&2; echo "$key"; return ;;
+            401|403) echo "The receiver rejected that key (${#key} characters). Try again, or Ctrl+C to quit." >&2 ;;
+            *) echo "Couldn't reach the receiver at $url (HTTP ${code:-none}); saving the key anyway." >&2
+               echo "$key"; return ;;
+        esac
+    done
+}
+
+if [ "${1:-}" = "--set-key" ]; then
+    [ -f .env ] || { echo "No .env yet; run ./install.sh first."; exit 1; }
+    url=$(grep -E '^STATS_URL=' .env | cut -d= -f2-)
+    key=$(ask_key "${url:-http://127.0.0.1:8080}")
+    [ -z "$key" ] && { echo "No key entered; nothing changed."; exit 1; }
+    sed -i "s|^SLS_API_KEY=.*|SLS_API_KEY=$key|" .env
+    docker compose up -d
+    say "Key saved and recorder restarted. Check with:  docker logs --tail 20 irl-auto-recorder"
+    exit 0
+fi
+
 command -v docker >/dev/null || { echo "Docker is not installed."; exit 1; }
 docker compose version >/dev/null 2>&1 || { echo "Docker Compose v2 is not installed."; exit 1; }
 
@@ -33,7 +62,7 @@ if [ ! -f .env ]; then
     echo
     echo "Paste the receiver's API key (the one the management web UI uses)."
     echo "Leave it empty to only record IDs listed in recordings/stream_ids.txt."
-    read -r -s -p "API key: " key; echo
+    key=$(ask_key "http://127.0.0.1:$stats_port")
     if [ -n "$key" ]; then
         sed -i "s|^SLS_API_KEY=.*|SLS_API_KEY=$key|" .env
     fi
