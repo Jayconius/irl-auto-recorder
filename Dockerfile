@@ -1,18 +1,13 @@
-FROM python:3.11-slim
+FROM python:3.13-slim
 
-# Install FFmpeg and network tools
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-    ffmpeg \
-    net-tools \
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-
-# Copy recorder script
 COPY auto_recorder.py .
 
-# Make script executable
-RUN chmod +x auto_recorder.py
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
+    CMD ["python3", "/app/auto_recorder.py", "healthcheck"]
 
-CMD ["python3", "-u", "auto_recorder.py"]
+CMD ["python3", "-u", "/app/auto_recorder.py"]
