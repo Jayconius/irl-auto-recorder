@@ -53,6 +53,15 @@ for svc in openirl-discovery openirl-cleanup; do
     fi
 done
 
+# A recorder container from another folder (e.g. version 1) would block the name.
+if docker inspect irl-auto-recorder >/dev/null 2>&1; then
+    old_dir=$(docker inspect irl-auto-recorder --format '{{index .Config.Labels "com.docker.compose.project.working_dir"}}')
+    if [ "$old_dir" != "$PWD" ]; then
+        warn "Removing old irl-auto-recorder container (from ${old_dir:-unknown folder}); its files are kept"
+        docker rm -f irl-auto-recorder >/dev/null
+    fi
+fi
+
 say "Building and starting the recorder"
 docker compose up -d --build
 echo
