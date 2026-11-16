@@ -9,6 +9,17 @@ Automatically records every stream on an [OpenIRL/srtla-receiver](https://github
 
 ---
 
+## 🆕 What's new in v2
+
+- **New stream profiles are recorded right away.** v1 found a stream key only after its first stream, by reading the receiver's logs. v2 reads the profile list from the receiver's API, so a profile you create in the web UI is recorded from its very first stream.
+- **The default player port is fixed (4000).** With v1's old default, nothing gets recorded on current srtla-receiver installs.
+- **Disk cleanup is built in,** so the separate discovery and cleanup services aren't needed anymore.
+- **More robust recording:** clean final files on shutdown, automatic resume after drops, and a Docker health check.
+
+Coming from v1? See [Upgrading from v1](#upgrading-from-v1).
+
+---
+
 ## ✨ Features
 
 - 🔑 **Follows your receiver's profiles.** Every stream profile in the receiver's web UI is recorded, including new ones before their first stream. Deleted profiles are dropped automatically.
@@ -61,6 +72,25 @@ cd irl-auto-recorder
 git pull
 docker compose up -d --build
 ```
+
+### Upgrading from v1
+
+v2 needs a `.env` file, so run the installer once instead of only `docker compose up`:
+
+```bash
+cd irl-auto-recorder
+git pull
+./install.sh
+```
+
+The installer:
+- asks for the receiver's API key
+- turns off the old `openirl-discovery` and `openirl-cleanup` services (it asks for your sudo password)
+- replaces the old recorder container
+
+Your recordings stay where they are.
+
+Afterwards, open `recordings/stream_ids.txt` and remove the IDs that v1 added. Receiver profiles now come from the API, and any stale IDs left there would still be checked.
 
 ### Manual install
 
