@@ -1,322 +1,348 @@
 #!/usr/bin/env python3
 """
-OpenIRL Auto Stream Recorder
-Automatically discovers and records all incoming SRT streams
+IRL Auto Recorder for OpenIRL srtla-receiver.
+
+Every stream profile on the receiver is picked up from its API (no need to
+stream once first), and each one is recorded automatically while it is live.
+
+Recordings: <RECORDINGS_DIR>/<player_id>/<YYYY-MM-DD>/<player_id>_<start>_partNNN.mkv
 """
 
-import subprocess
-import os
-import time
 import json
+import os
+import shutil
+import signal
+import subprocess
+import sys
+import threading
+import time
+import urllib.error
+import urllib.parse
 import urllib.request
+from collections import deque
 from datetime import datetime
-from collections import defaultdict
 
-# ========== CONFIGURATION ==========
-# These can be overridden by environment variables
-STATS_HOST = os.environ.get('STATS_HOST', '127.0.0.1:8080')
-SRT_CALLER_HOST = os.environ.get('SRT_CALLER_HOST', '127.0.0.1:4000')
-RECORDINGS_BASE = os.environ.get('RECORDINGS_BASE', os.path.expanduser('~/recordings'))
-SEGMENT_DURATION = int(os.environ.get('SEGMENT_DURATION', '900'))  # 15 minutes in seconds
-DISCONNECT_GRACE = int(os.environ.get('DISCONNECT_GRACE', '90'))   # 90 seconds grace period
-POLL_INTERVAL = int(os.environ.get('POLL_INTERVAL', '10'))         # Check for streams every 10 seconds
-DISCOVERY_INTERVAL = int(os.environ.get('DISCOVERY_INTERVAL', '30'))  # Check file for new streams every 30 seconds
 
-# ========== STATE TRACKING ==========
-active_recordings = {}  # stream_id -> {process, last_seen, start_time}
-stream_offline_timers = {}  # stream_id -> timestamp when went offline
-known_stream_ids = set()  # All stream IDs we know about
-last_discovery_time = 0  # Last time we checked for new streams
+# ---------------------------------------------------------------- config ---
 
+def env_int(name, default):
+    value = os.environ.get(name, "").strip()
+    try:
+        return int(value) if value else default
+    except ValueError:
+        sys.exit(f"Config error: {name} must be a whole number, got {value!r}")
+
+
+STATS_URL = os.environ.get("STATS_URL", "http://127.0.0.1:8080").rstrip("/")
+SRT_PLAYER = os.environ.get("SRT_PLAYER", "127.0.0.1:4000")
+API_KEY = os.environ.get("SLS_API_KEY", "").strip()
+RECORDINGS_DIR = os.environ.get("RECORDINGS_DIR", "/recordings")
+SEGMENT_SECONDS = env_int("SEGMENT_SECONDS", 900)    # length of each file
+GRACE_SECONDS = env_int("GRACE_SECONDS", 90)         # keep recording through short drops
+POLL_SECONDS = env_int("POLL_SECONDS", 5)            # how often to check who is live
+SYNC_SECONDS = env_int("SYNC_SECONDS", 60)           # how often to re-read profiles (API limit: 30/min)
+SRT_TIMEOUT_SECONDS = env_int("SRT_TIMEOUT_SECONDS", 10)  # ffmpeg gives up after this much silence
+CLEANUP_START_PERCENT = env_int("CLEANUP_START_PERCENT", 85)    # disk use that starts a cleanup (0 = off)
+CLEANUP_TARGET_PERCENT = env_int("CLEANUP_TARGET_PERCENT", 75)  # delete oldest files until below this
+CLEANUP_INTERVAL_SECONDS = 300
+EXCLUDE = {s.strip() for s in os.environ.get("EXCLUDE_STREAM_IDS", "").split(",") if s.strip()}
+EXTRA_IDS_FILE = os.path.join(RECORDINGS_DIR, "stream_ids.txt")
+HEARTBEAT_FILE = "/tmp/recorder-heartbeat"
+
+
+# --------------------------------------------------------------- logging ---
 
 def log(msg):
-    """Print timestamped log message"""
-    print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {msg}", flush=True)
+    print(f"[{datetime.now():%Y-%m-%d %H:%M:%S}] {msg}", flush=True)
 
 
-def load_stream_ids_from_file():
-    """
-    Load stream IDs from a text file if it exists
-    File format: one stream ID per line
-    """
-    stream_file = os.path.join(RECORDINGS_BASE, "stream_ids.txt")
-    stream_ids = set()
-    
-    try:
-        if os.path.exists(stream_file):
-            with open(stream_file, 'r') as f:
-                for line in f:
-                    line = line.strip()
-                    # Skip comments and empty lines
-                    if line and not line.startswith('#') and line.startswith('play_'):
-                        stream_ids.add(line)
-                        # Don't log every read, only new discoveries
-    except Exception as e:
-        log(f"⚠️  Could not read stream_ids.txt: {e}")
-    
-    return stream_ids
+# ------------------------------------------------------------ receiver ---
+
+def http_json(url, headers=None, timeout=5):
+    req = urllib.request.Request(url, headers=headers or {})
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return json.loads(resp.read().decode("utf-8"))
 
 
-def check_stream_stats(stream_id):
-    """
-    Check if a stream is currently active via stats API
-    Returns: dict with stream stats if active, None if offline
-    """
-    try:
-        url = f"http://{STATS_HOST}/stats/{stream_id}"
-        with urllib.request.urlopen(url, timeout=5) as response:
-            data = json.loads(response.read().decode())
-            
-            # Check if publisher is actually streaming
-            if data.get("status") == "ok" and "publisher" in data:
-                return data
-            return None
-    except Exception:
+def fetch_profiles():
+    """Player IDs of every profile on the receiver, or None if the API can't be read."""
+    if not API_KEY:
         return None
+    data = http_json(f"{STATS_URL}/api/stream-ids",
+                     headers={"Authorization": f"Bearer {API_KEY}"})
+    if data.get("status") != "success":
+        raise RuntimeError(data.get("message", "unexpected API response"))
+    return {row["player"] for row in data.get("data", []) if row.get("player")}
 
 
-def discover_new_streams():
-    """
-    Discover new stream IDs from the text file
-    """
-    new_ids = set()
-    
-    # Load from text file
-    file_ids = load_stream_ids_from_file()
-    new_ids.update(file_ids)
-    
-    # Add newly discovered IDs to our known set
-    for stream_id in new_ids:
-        if stream_id not in known_stream_ids:
-            known_stream_ids.add(stream_id)
-            log(f"🆕 Discovered new stream ID: {stream_id}")
-    
-    return known_stream_ids
-
-
-def discover_active_streams():
-    """
-    Check which known streams are currently active
-    """
-    active = set()
-    
-    for stream_id in known_stream_ids:
-        # Only check play_ streams, skip live_ streams
-        if not stream_id.startswith('play_'):
-            continue
-        
-        if check_stream_stats(stream_id):
-            active.add(stream_id)
-    
-    return active
-
-
-def get_stream_folder(stream_id):
-    """
-    Create organized folder structure for recordings
-    Format: /recordings/play_XXXXX/YYYY-MM-DD/
-    """
-    today = datetime.now().strftime('%Y-%m-%d')
-    folder = os.path.join(RECORDINGS_BASE, stream_id, today)
-    os.makedirs(folder, exist_ok=True)
-    return folder
-
-
-def start_recording(stream_id):
-    """
-    Start FFmpeg recording for a stream with 15-minute segmentation
-    """
-    folder = get_stream_folder(stream_id)
-    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    
-    # Filename pattern for segments
-    filename_pattern = os.path.join(folder, f"{stream_id}_{timestamp}_part%03d.mkv")
-    
-    # SRT URL to connect to OpenIRL
-    srt_url = f"srt://{SRT_CALLER_HOST}?mode=caller&streamid={stream_id}"
-    
-    # FFmpeg command with segmentation
-    cmd = [
-        "ffmpeg",
-        "-hide_banner",
-        "-loglevel", "error",
-        "-i", srt_url,
-        "-map", "0",
-        "-c", "copy",
-        "-f", "segment",
-        "-segment_time", str(SEGMENT_DURATION),
-        "-reset_timestamps", "1",
-        "-segment_format", "matroska",
-        "-segment_atclocktime", "1",
-        filename_pattern
-    ]
-    
-    log(f"🎬 STARTING recording: {stream_id}")
-    log(f"   📁 Saving to: {folder}")
-    
+def read_extra_ids():
+    """Optional manual list: one player ID per line, # for comments."""
+    ids = set()
     try:
-        process = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE
-        )
-        
-        active_recordings[stream_id] = {
-            'process': process,
-            'last_seen': time.time(),
-            'start_time': datetime.now(),
-            'folder': folder
-        }
-        
-        return True
-    except Exception as e:
-        log(f"❌ ERROR starting recording for {stream_id}: {e}")
-        return False
+        with open(EXTRA_IDS_FILE, encoding="utf-8") as f:
+            for line in f:
+                line = line.split("#", 1)[0].strip()
+                if line:
+                    ids.add(line)
+    except FileNotFoundError:
+        pass
+    return ids
 
 
-def stop_recording(stream_id):
-    """
-    Stop recording for a stream
-    """
-    if stream_id not in active_recordings:
+def is_live(player_id):
+    """True when someone is publishing to this profile right now."""
+    quoted = urllib.parse.quote(player_id, safe="")
+    data = http_json(f"{STATS_URL}/stats/{quoted}")
+    return bool(data.get("publisher") or data.get("publishers"))
+
+
+# ------------------------------------------------------------ recording ---
+
+class Recording:
+    def __init__(self, player_id):
+        self.player_id = player_id
+        self.started = datetime.now()
+        self.last_live = time.monotonic()
+        self.stderr_tail = deque(maxlen=15)
+
+        folder = os.path.join(RECORDINGS_DIR, player_id, f"{self.started:%Y-%m-%d}")
+        os.makedirs(folder, exist_ok=True)
+        pattern = os.path.join(folder, f"{player_id}_{self.started:%Y%m%d_%H%M%S}_part%03d.mkv")
+
+        query = urllib.parse.urlencode({
+            "mode": "caller",
+            "streamid": player_id,
+            "timeout": SRT_TIMEOUT_SECONDS * 1_000_000,   # microseconds
+        })
+        cmd = [
+            "ffmpeg", "-hide_banner", "-nostdin", "-loglevel", "warning",
+            "-fflags", "+genpts",
+            "-i", f"srt://{SRT_PLAYER}?{query}",
+            # Video and audio only: data tracks some encoders add can't go in MKV.
+            "-map", "0:v?", "-map", "0:a?",
+            "-c", "copy",
+            "-f", "segment",
+            "-segment_time", str(SEGMENT_SECONDS),
+            "-segment_atclocktime", "1",
+            "-segment_format", "matroska",
+            "-reset_timestamps", "1",
+            pattern,
+        ]
+        self.process = subprocess.Popen(cmd, stdin=subprocess.DEVNULL,
+                                        stdout=subprocess.DEVNULL,
+                                        stderr=subprocess.PIPE, text=True,
+                                        errors="replace")
+        threading.Thread(target=self._drain_stderr, daemon=True).start()
+        log(f"🎬 Recording {player_id} -> {folder}")
+
+    def _drain_stderr(self):
+        for line in self.process.stderr:
+            self.stderr_tail.append(line.rstrip())
+
+    def running(self):
+        return self.process.poll() is None
+
+    def stop(self, reason):
+        if self.running():
+            # SIGINT lets ffmpeg finish the current file cleanly.
+            self.process.send_signal(signal.SIGINT)
+            try:
+                self.process.wait(timeout=15)
+            except subprocess.TimeoutExpired:
+                self.process.kill()
+                self.process.wait()
+        minutes = (datetime.now() - self.started).total_seconds() / 60
+        log(f"🛑 Stopped {self.player_id} after {minutes:.1f} min ({reason})")
+
+
+# -------------------------------------------------------------- cleanup ---
+
+def disk_percent():
+    usage = shutil.disk_usage(RECORDINGS_DIR)
+    return usage.used * 100 / usage.total
+
+
+def cleanup_disk():
+    """Delete the oldest recordings once the disk passes CLEANUP_START_PERCENT."""
+    if CLEANUP_START_PERCENT <= 0 or disk_percent() < CLEANUP_START_PERCENT:
         return
-    
-    rec = active_recordings[stream_id]
-    process = rec['process']
-    
-    log(f"🛑 STOPPING recording: {stream_id}")
-    duration = datetime.now() - rec['start_time']
-    log(f"   ⏱️  Duration: {duration}")
-    
-    try:
-        process.terminate()
-        process.wait(timeout=10)
-    except subprocess.TimeoutExpired:
-        process.kill()
-    except Exception as e:
-        log(f"⚠️  Error stopping {stream_id}: {e}")
-    
-    del active_recordings[stream_id]
-    if stream_id in stream_offline_timers:
-        del stream_offline_timers[stream_id]
+    log(f"🧹 Disk at {disk_percent():.0f}%, deleting oldest recordings "
+        f"until below {CLEANUP_TARGET_PERCENT}%")
+    cutoff = time.time() - 120   # never touch files still being written
+    files = []
+    for root, _, names in os.walk(RECORDINGS_DIR):
+        for name in names:
+            if name.endswith(".mkv"):
+                path = os.path.join(root, name)
+                try:
+                    mtime = os.path.getmtime(path)
+                except OSError:
+                    continue
+                if mtime < cutoff:
+                    files.append((mtime, path))
+    files.sort()
 
-
-def main_loop():
-    """
-    Main monitoring loop
-    """
-    global last_discovery_time
-    
-    log("🚀 OpenIRL Auto-Recorder started")
-    log(f"📊 Monitoring: {STATS_HOST}")
-    log(f"💾 Recordings: {RECORDINGS_BASE}")
-    log(f"⏱️  Segment duration: {SEGMENT_DURATION}s ({SEGMENT_DURATION//60} min)")
-    log(f"🔌 Disconnect grace period: {DISCONNECT_GRACE}s")
-    log(f"")
-    log(f"📝 To add streams, edit: {os.path.join(RECORDINGS_BASE, 'stream_ids.txt')}")
-    log(f"   Add one stream ID per line (e.g., play_123456789012)")
-    log(f"   Or use auto-discovery to add them automatically!")
-    log(f"")
-    log(f"🔍 Checking for streams...")
-    
-    # Initial discovery
-    discover_new_streams()
-    last_discovery_time = time.time()
-    
-    if not known_stream_ids:
-        log(f"⚠️  No stream IDs found in stream_ids.txt")
-        log(f"   Add stream IDs manually or wait for auto-discovery")
-    
-    while True:
-        try:
-            current_time = time.time()
-            
-            # Periodically check for new streams
-            if current_time - last_discovery_time >= DISCOVERY_INTERVAL:
-                discover_new_streams()
-                last_discovery_time = current_time
-            
-            # Check which known streams are currently active
-            active_streams = discover_active_streams()
-            
-            # Process each active stream
-            for stream_id in active_streams:
-                if stream_id not in active_recordings:
-                    # New stream detected - start recording
-                    start_recording(stream_id)
-                    # Clear any offline timer
-                    if stream_id in stream_offline_timers:
-                        del stream_offline_timers[stream_id]
-                else:
-                    # Update last seen timestamp
-                    active_recordings[stream_id]['last_seen'] = current_time
-                    # Clear offline timer since stream is active
-                    if stream_id in stream_offline_timers:
-                        del stream_offline_timers[stream_id]
-            
-            # Check for streams that went offline
-            for stream_id in list(active_recordings.keys()):
-                if stream_id not in active_streams:
-                    # Stream not detected in current scan
-                    if stream_id not in stream_offline_timers:
-                        # First time noticing it's offline - start grace period
-                        stream_offline_timers[stream_id] = current_time
-                        log(f"⚠️  Stream offline: {stream_id} (grace period: {DISCONNECT_GRACE}s)")
-                    else:
-                        # Check if grace period expired
-                        offline_duration = current_time - stream_offline_timers[stream_id]
-                        if offline_duration >= DISCONNECT_GRACE:
-                            log(f"💤 Grace period expired for {stream_id} ({offline_duration:.0f}s)")
-                            stop_recording(stream_id)
-            
-            # Check for dead processes
-            for stream_id in list(active_recordings.keys()):
-                rec = active_recordings[stream_id]
-                if rec['process'].poll() is not None:
-                    # Process died
-                    log(f"⚰️  Recording process died: {stream_id}")
-                    try:
-                        stderr_output = rec['process'].stderr.read().decode()
-                        if stderr_output:
-                            log(f"   ⚠️  FFmpeg error: {stderr_output[:200]}")
-                    except:
-                        pass
-                    del active_recordings[stream_id]
-                    if stream_id in stream_offline_timers:
-                        del stream_offline_timers[stream_id]
-            
-            # Sleep before next check
-            time.sleep(POLL_INTERVAL)
-            
-        except KeyboardInterrupt:
-            log("\n⏹️  Shutting down...")
+    deleted = 0
+    for _, path in files:
+        if disk_percent() < CLEANUP_TARGET_PERCENT or deleted >= 1000:
             break
-        except Exception as e:
-            log(f"❌ Error in main loop: {e}")
-            time.sleep(POLL_INTERVAL)
-    
-    # Cleanup - stop all recordings
-    log("🧹 Stopping all active recordings...")
-    for stream_id in list(active_recordings.keys()):
-        stop_recording(stream_id)
-    
-    log("✅ Recorder stopped")
+        try:
+            os.remove(path)
+            deleted += 1
+            log(f"   🗑️  {os.path.relpath(path, RECORDINGS_DIR)}")
+        except OSError as e:
+            log(f"   ⚠️  Could not delete {path}: {e}")
+
+    # Remove day/stream folders left empty (never the recordings folder itself).
+    for root, dirs, names in os.walk(RECORDINGS_DIR, topdown=False):
+        if root != RECORDINGS_DIR and not dirs and not names:
+            try:
+                os.rmdir(root)
+            except OSError:
+                pass
+    log(f"🧹 Deleted {deleted} file(s), disk now {disk_percent():.0f}%")
+
+
+# ----------------------------------------------------------------- main ---
+
+class Recorder:
+    def __init__(self):
+        self.tracked = set()
+        self.api_profiles = set()
+        self.recordings = {}
+        self.last_sync = 0.0
+        self.last_cleanup = 0.0
+        self.api_problem = None
+        self.stats_problem = None
+        self.retry_after = {}     # player_id -> monotonic time we may retry
+        self.stopping = False
+
+    def sync_profiles(self):
+        try:
+            profiles = fetch_profiles()
+            if self.api_problem:
+                log("✅ Receiver API reachable again")
+            self.api_problem = None
+        except urllib.error.HTTPError as e:
+            profiles = None
+            problem = ("API key rejected (check SLS_API_KEY)" if e.code in (401, 403)
+                       else f"API error HTTP {e.code}")
+            self._report_api_problem(problem)
+        except Exception as e:  # network down, receiver restarting, bad JSON...
+            profiles = None
+            self._report_api_problem(f"API unreachable: {e}")
+
+        if profiles is not None:
+            self.api_profiles = profiles
+        # On an API failure, self.api_profiles still holds the last good list.
+        wanted = (self.api_profiles | read_extra_ids()) - EXCLUDE
+        for pid in sorted(wanted - self.tracked):
+            log(f"➕ Tracking {pid}")
+        for pid in sorted(self.tracked - wanted):
+            log(f"➖ No longer tracking {pid}")
+        self.tracked = wanted
+
+    def _report_api_problem(self, problem):
+        if problem != self.api_problem:
+            log(f"⚠️  {problem}. Keeping the last known list of streams.")
+        self.api_problem = problem
+
+    def tick(self):
+        now = time.monotonic()
+        if now - self.last_sync >= SYNC_SECONDS:
+            self.sync_profiles()
+            self.last_sync = now
+        if now - self.last_cleanup >= CLEANUP_INTERVAL_SECONDS:
+            self.last_cleanup = now
+            try:
+                cleanup_disk()
+            except OSError as e:
+                log(f"⚠️  Cleanup failed: {e}")
+
+        for pid in sorted(self.tracked | set(self.recordings)):
+            try:
+                live = is_live(pid)
+                if self.stats_problem:
+                    log("✅ Receiver stats reachable again")
+                self.stats_problem = None
+            except Exception as e:
+                problem = f"Stats unreachable at {STATS_URL}: {e}"
+                if problem != self.stats_problem:
+                    log(f"⚠️  {problem}")
+                self.stats_problem = problem
+                return  # don't stop recordings just because stats blipped
+
+            rec = self.recordings.get(pid)
+            if rec and not rec.running():
+                if rec.process.returncode == 0:
+                    log(f"🔌 {pid} disconnected (will resume if it comes back)")
+                else:
+                    tail = " | ".join(list(rec.stderr_tail)[-3:]) or "no output"
+                    log(f"⚠️  ffmpeg failed for {pid} (code {rec.process.returncode}): {tail}")
+                del self.recordings[pid]
+                rec = None
+                self.retry_after[pid] = now + 5
+
+            if live:
+                if rec:
+                    rec.last_live = now
+                elif pid in self.tracked and now >= self.retry_after.get(pid, 0):
+                    self.recordings[pid] = Recording(pid)
+            elif rec and now - rec.last_live >= GRACE_SECONDS:
+                rec.stop(f"offline for {GRACE_SECONDS}s")
+                del self.recordings[pid]
+
+    def shutdown(self, *_):
+        self.stopping = True
+
+    def run(self):
+        log("🚀 IRL Auto Recorder starting")
+        log(f"   Receiver stats/API: {STATS_URL}")
+        log(f"   SRT player:         {SRT_PLAYER}")
+        log(f"   Recordings:         {RECORDINGS_DIR}")
+        log(f"   Segments {SEGMENT_SECONDS}s, grace {GRACE_SECONDS}s, poll {POLL_SECONDS}s")
+        if CLEANUP_START_PERCENT > 0:
+            log(f"   Cleanup at {CLEANUP_START_PERCENT}% disk, down to {CLEANUP_TARGET_PERCENT}%")
+        else:
+            log("   Disk cleanup off")
+        if not API_KEY:
+            log(f"⚠️  SLS_API_KEY not set: only recording IDs listed in {EXTRA_IDS_FILE}")
+        os.makedirs(RECORDINGS_DIR, exist_ok=True)
+
+        signal.signal(signal.SIGTERM, self.shutdown)
+        signal.signal(signal.SIGINT, self.shutdown)
+
+        while not self.stopping:
+            try:
+                self.tick()
+            except Exception as e:
+                log(f"❌ Unexpected error: {e!r}")
+            try:
+                with open(HEARTBEAT_FILE, "w") as f:
+                    f.write(str(time.time()))
+            except OSError:
+                pass
+            for _ in range(POLL_SECONDS * 10):
+                if self.stopping:
+                    break
+                time.sleep(0.1)
+
+        for rec in list(self.recordings.values()):
+            rec.stop("recorder shutting down")
+        log("👋 Stopped")
+
+
+def healthcheck():
+    """Used by Docker: healthy if the main loop ran recently."""
+    try:
+        with open(HEARTBEAT_FILE) as f:
+            age = time.time() - float(f.read())
+    except (OSError, ValueError):
+        return 1
+    return 0 if age < max(60, POLL_SECONDS * 6) else 1
 
 
 if __name__ == "__main__":
-    # Ensure recordings directory exists
-    os.makedirs(RECORDINGS_BASE, exist_ok=True)
-    
-    # Create empty stream_ids.txt if it doesn't exist
-    stream_file = os.path.join(RECORDINGS_BASE, "stream_ids.txt")
-    if not os.path.exists(stream_file):
-        with open(stream_file, 'w') as f:
-            f.write("# OpenIRL Auto-Recorder Stream List\n")
-            f.write("# Add your play_ stream IDs here, one per line\n")
-            f.write("# Example: play_123456789012\n")
-            f.write("#\n")
-            f.write("# Lines starting with # are comments and will be ignored\n")
-            f.write("# Auto-discovery will add new streams automatically\n")
-            f.write("\n")
-    
-    main_loop()
+    if len(sys.argv) > 1 and sys.argv[1] == "healthcheck":
+        sys.exit(healthcheck())
+    Recorder().run()
